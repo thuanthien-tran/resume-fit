@@ -38,6 +38,10 @@ MAX_INTERNAL_RETRIES = 3
 DEFAULT_RETRY_DELAY_SECONDS = 30
 
 
+class RetryableAnalysisError(Exception):
+    """Signal the SQS worker to leave the message in the queue for redelivery."""
+
+
 def is_transient_error(exc: Exception) -> bool:
     """Phân biệt lỗi tạm thời (retry được) với lỗi dữ liệu (fail luôn)."""
     return isinstance(exc, TRANSIENT_ERRORS)
@@ -333,7 +337,18 @@ def process_analysis_job(message: dict):
             process_analysis_job(retry_message)
             return
 
-        # Lỗi dữ liệu hoặc đã hết lượt retry -> đánh dấu thất bại.
+        if retryable:
+            _reset_for_retry(db, job_id, candidate_id, exc)
+            logger.exception(
+                "Transient analysis error exhausted internal retries: job=%s candidate=%s",
+                job_id,
+                candidate_id,
+            )
+            raise RetryableAnalysisError(
+                f"Transient analysis error after {MAX_INTERNAL_RETRIES} internal retries"
+            ) from exc
+
+        # Lỗi dữ liệu không thể tự hết bằng retry -> đánh dấu thất bại và cho phép xóa SQS message.
         job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
         candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first() if candidate_id else None
         if candidate:

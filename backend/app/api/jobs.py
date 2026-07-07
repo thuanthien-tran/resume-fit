@@ -379,8 +379,48 @@ async def enqueue_job(job_id: UUID, db: Session = Depends(get_db), current_user:
     create_job_event(db, job.id, "job_queued", old_status, "queued", f"Đã đưa {len(candidates)} ứng viên vào hàng đợi")
     db.commit()
 
-    for message in queue_messages:
-        await sqs_service.send_analysis_job(**message)
+    sent_candidate_ids = set()
+    try:
+        for message in queue_messages:
+            await sqs_service.send_analysis_job(**message)
+            sent_candidate_ids.add(message["candidate_id"])
+    except Exception as exc:
+        now = datetime.now(timezone.utc)
+        unsent_candidate_ids = [
+            message["candidate_id"]
+            for message in queue_messages
+            if message["candidate_id"] not in sent_candidate_ids
+        ]
+        if unsent_candidate_ids:
+            db.query(Candidate).filter(Candidate.id.in_(unsent_candidate_ids)).update(
+                {
+                    Candidate.status: "uploaded",
+                    Candidate.queued_at: None,
+                    Candidate.error_code: "SQS_ENQUEUE_FAILED",
+                    Candidate.error_message: str(exc)[:1000],
+                    Candidate.updated_at: now,
+                },
+                synchronize_session=False,
+            )
+        job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
+        if job:
+            if not sent_candidate_ids:
+                job.status = "uploaded"
+                job.queued_at = None
+            job.error_code = "SQS_ENQUEUE_FAILED"
+            job.error_message = str(exc)[:1000]
+            job.updated_at = now
+            create_job_event(
+                db,
+                job.id,
+                "job_enqueue_failed",
+                "queued",
+                job.status,
+                "Không gửi được toàn bộ ứng viên vào hàng đợi SQS",
+                {"sent": len(sent_candidate_ids), "unsent": len(unsent_candidate_ids)},
+            )
+        db.commit()
+        raise HTTPException(status_code=503, detail="Không gửi được công việc vào hàng đợi. Vui lòng thử lại.") from exc
 
     return {"job_id": str(job.id), "status": job.status, "enqueued_candidates": len(candidates)}
 
