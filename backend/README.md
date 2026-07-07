@@ -1,41 +1,40 @@
-# Backend API
+﻿# Backend API
 
-FastAPI service cho nền tảng phân tích CV ↔ JD: auth (JWT + refresh token),
-upload/trích xuất văn bản, tạo job phân tích đa ứng viên, matching engine và
-sinh phản hồi AI.
+FastAPI service cho ná»n táº£ng phÃ¢n tÃ­ch CV â†” JD: auth (JWT + refresh token),
+upload/trÃ­ch xuáº¥t vÄƒn báº£n, táº¡o job phÃ¢n tÃ­ch Ä‘a á»©ng viÃªn, matching engine vÃ 
+sinh pháº£n há»“i AI.
 
-## Cấu trúc
+## Cáº¥u trÃºc
 
 ```text
 backend/
-├── app/
-│   ├── api/            # Route handlers (auth, uploads, jobs, admin, health)
-│   ├── ai/             # AI service (mock, ollama, xai) + factory
-│   ├── auth/           # Tiện ích xác thực
-│   ├── core/           # Config, logging, security
-│   ├── database/       # Session, Base
-│   ├── matching/       # Matching engine (rule-based scoring)
-│   ├── models/         # SQLAlchemy models
-│   ├── queue/          # Celery queue interface
-│   ├── repositories/   # Truy vấn dữ liệu
-│   ├── schemas/        # Pydantic schemas
-│   ├── scripts/        # Script tiện ích (create_admin)
-│   ├── services/       # Trích xuất văn bản, upload, job event
-│   ├── storage/        # Local storage + interface cho MinIO/S3
-│   └── utils/
-├── alembic/            # Migrations
-├── tests/
-├── Dockerfile
-└── requirements.txt
+â”œâ”€â”€ app/
+â”‚   â”œâ”€â”€ api/            # Route handlers (auth, uploads, jobs, admin, health)
+â”‚   â”œâ”€â”€ ai/             # AI service (mock, ollama, xai) + factory
+â”‚   â”œâ”€â”€ auth/           # Tiá»‡n Ã­ch xÃ¡c thá»±c
+â”‚   â”œâ”€â”€ core/           # Config, logging, security
+â”‚   â”œâ”€â”€ database/       # Session, Base
+â”‚   â”œâ”€â”€ matching/       # Matching engine (rule-based scoring)
+â”‚   â”œâ”€â”€ models/         # SQLAlchemy models
+â”‚   â”œâ”€â”€ repositories/   # Truy váº¥n dá»¯ liá»‡u
+â”‚   â”œâ”€â”€ schemas/        # Pydantic schemas
+â”‚   â”œâ”€â”€ scripts/        # Script tiá»‡n Ã­ch (create_admin)
+â”‚   â”œâ”€â”€ services/       # TrÃ­ch xuáº¥t vÄƒn báº£n, upload, job event, SQS
+â”‚   â”œâ”€â”€ storage/        # Local storage + interface cho MinIO/S3
+â”‚   â””â”€â”€ utils/
+â”œâ”€â”€ alembic/            # Migrations
+â”œâ”€â”€ tests/
+â”œâ”€â”€ Dockerfile
+â””â”€â”€ requirements.txt
 ```
 
-## Chạy migration
+## Cháº¡y migration
 
 ```bash
 alembic upgrade head
 ```
 
-## Chạy dev local
+## Cháº¡y dev local
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000

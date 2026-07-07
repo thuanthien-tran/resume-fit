@@ -1,5 +1,5 @@
 # Worker
 
-Celery worker source for background CV/JD analysis jobs.
+Python worker service for background CV/JD analysis jobs.
 
-The worker imports shared backend modules from `backend/app` and registers the analysis task consumed from Redis.
+The worker long-polls Amazon SQS, processes one analysis message at a time, and deletes the message only after processing finishes successfully. Failed messages are left in SQS so the queue redrive policy can retry and eventually move exhausted messages to `ResumeMatching-DLQ`.

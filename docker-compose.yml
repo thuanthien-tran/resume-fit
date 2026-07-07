@@ -17,18 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7
-    container_name: resume_redis
-    restart: unless-stopped
-    networks:
-      - resume_network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   backend-api:
     build:
       context: ./backend
@@ -40,8 +28,6 @@ services:
       - ./uploads:/app/uploads
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     networks:
       - resume_network
@@ -62,13 +48,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       backend-api:
         condition: service_started
     networks:
       - resume_network
-    command: celery -A worker.celery_app.celery_app worker --loglevel=info
+    command: python worker/main.py
 
   frontend:
     build:

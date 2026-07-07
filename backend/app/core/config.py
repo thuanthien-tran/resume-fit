@@ -7,7 +7,6 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
 
     database_url: str
-    redis_url: str
 
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
@@ -18,20 +17,23 @@ class Settings(BaseSettings):
     upload_dir: str = "/app/uploads"
     max_upload_size_mb: int = 10
 
-    # Storage & queue provider selection (local-first, S3/SQS ready)
+    # Storage provider selection (local-first, S3 ready)
     storage_provider: str = "local"  # local | s3
-    queue_provider: str = "celery"  # celery | sqs
     backend_public_url: str = "http://localhost:8080"
 
     # S3 (also used for MinIO/S3-compatible via s3_endpoint_url)
-    aws_region: str = "ap-southeast-1"
+    aws_region: str = "us-east-1"
+    aws_default_region: str = "us-east-1"
     s3_bucket: str = ""
     s3_endpoint_url: str = ""  # empty = real AWS; set = MinIO/local S3
     presign_expiry_seconds: int = 900
 
     # SQS
+    sqs_queue_name: str = "ResumeMatching-Queue"
     sqs_queue_url: str = ""
     sqs_dlq_url: str = ""
+    sqs_wait_time_seconds: int = 20
+    sqs_visibility_timeout_seconds: int = 300
 
     ai_provider: str = "mock"
     ai_model: str = "mock-v1"

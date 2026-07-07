@@ -16,7 +16,6 @@ from app.models.candidate import Candidate
 from app.models.uploaded_file import UploadedFile
 from app.models.user import User
 from app.api.uploads import candidate_name_from_filename
-from app.queue.factory import get_queue_service
 from app.storage.factory import get_storage_service
 from app.schemas.job import (
     AttachFileRequest,
@@ -29,9 +28,9 @@ from app.schemas.job import (
 )
 from app.services.job_event_service import create_job_event
 from app.services.report_pdf import build_candidate_report_pdf
+from app.services.sqs_service import sqs_service
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
-queue_service = get_queue_service()
 storage_service = get_storage_service()
 
 
@@ -332,7 +331,7 @@ def get_job(job_id: UUID, db: Session = Depends(get_db), current_user: User = De
 
 
 @router.post("/{job_id}/enqueue")
-def enqueue_job(job_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def enqueue_job(job_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Không tìm thấy công việc")
@@ -370,13 +369,10 @@ def enqueue_job(job_id: UUID, db: Session = Depends(get_db), current_user: User 
         candidate.error_message = None
         queue_messages.append(
             {
-                "job_id": str(job.id),
-                "candidate_id": str(candidate.id),
-                "user_id": str(current_user.id),
-                "cv_file_id": str(candidate.cv_file_id),
-                "jd_file_id": str(jd_file.id),
-                "requested_at": now.isoformat(),
-                "attempt": (job.retry_count or 0) + 1,
+                "job_id": job.id,
+                "candidate_id": candidate.id,
+                "cv_file_id": candidate.cv_file_id,
+                "jd_file_id": jd_file.id,
             }
         )
 
@@ -384,7 +380,7 @@ def enqueue_job(job_id: UUID, db: Session = Depends(get_db), current_user: User 
     db.commit()
 
     for message in queue_messages:
-        queue_service.enqueue_analysis_job(message)
+        await sqs_service.send_analysis_job(**message)
 
     return {"job_id": str(job.id), "status": job.status, "enqueued_candidates": len(candidates)}
 

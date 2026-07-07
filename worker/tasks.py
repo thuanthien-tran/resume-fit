@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timezone
 from uuid import UUID
 
+from botocore.exceptions import ConnectionClosedError, ConnectTimeoutError, EndpointConnectionError, ReadTimeoutError
 from sqlalchemy.exc import IntegrityError, InterfaceError, OperationalError
 
 from app.ai.factory import get_ai_service
@@ -17,14 +18,24 @@ from app.models.uploaded_file import UploadedFile
 from app.services.job_event_service import create_job_event
 from app.services.text_extractor import extract_text
 from app.storage.factory import get_storage_service
-from worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
 
 # Lỗi tạm thời -> nên retry. Lỗi dữ liệu (ValueError: parse/empty/unsupported)
 # -> fail luôn vì retry cũng không đổi kết quả.
-TRANSIENT_ERRORS = (OperationalError, InterfaceError, ConnectionError, TimeoutError)
+TRANSIENT_ERRORS = (
+    OperationalError,
+    InterfaceError,
+    ConnectionError,
+    TimeoutError,
+    EndpointConnectionError,
+    ConnectTimeoutError,
+    ReadTimeoutError,
+    ConnectionClosedError,
+)
+MAX_INTERNAL_RETRIES = 3
+DEFAULT_RETRY_DELAY_SECONDS = 30
 
 
 def is_transient_error(exc: Exception) -> bool:
@@ -171,8 +182,7 @@ def update_job_terminal_status(db, job: AnalysisJob) -> None:
     job.updated_at = now
 
 
-@celery_app.task(name="app.worker.tasks.process_analysis_job", bind=True, max_retries=3, default_retry_delay=30)
-def process_analysis_job(self, message: dict):
+def process_analysis_job(message: dict):
     db = SessionLocal()
     start_time = time.time()
     job_id = UUID(message["job_id"])
@@ -211,6 +221,7 @@ def process_analysis_job(self, message: dict):
         create_job_event(db, job.id, "job_processing", old_status, "processing", "Worker bắt đầu xử lý")
         db.commit()
 
+        logger.info("worker_download_cv_started", extra={"job_id": str(job_id), "candidate_id": str(candidate_id)})
         storage_service = get_storage_service()
         cv_file_id = candidate.cv_file_id if candidate else UUID(message["cv_file_id"])
         jd_file_id = UUID(message["jd_file_id"])
@@ -220,8 +231,10 @@ def process_analysis_job(self, message: dict):
             raise ValueError("CV or JD file metadata not found")
 
         cv_content = storage_service.read(cv_file.storage_path)
+        logger.info("worker_download_jd_started", extra={"job_id": str(job_id), "candidate_id": str(candidate_id)})
         jd_content = storage_service.read(jd_file.storage_path)
 
+        logger.info("worker_extract_text_started", extra={"job_id": str(job_id), "candidate_id": str(candidate_id)})
         cv_text = extract_text(cv_content, cv_file.storage_path)
         jd_text = extract_text(jd_content, jd_file.storage_path)
         if not cv_text.strip() or not jd_text.strip():
@@ -244,6 +257,7 @@ def process_analysis_job(self, message: dict):
                 + ". Vui lòng kiểm tra lại CV và JD đã tải đúng ô chưa."
             )
 
+        logger.info("worker_matching_started", extra={"job_id": str(job_id), "candidate_id": str(candidate_id)})
         matching_result = calculate_matching(cv_text, jd_text)
         confidence, warnings = build_parse_quality(cv_text, jd_text, matching_result)
         matching_result["confidence"] = confidence
@@ -255,6 +269,7 @@ def process_analysis_job(self, message: dict):
             "jd_truncated": len(jd_text) > 12000,
         }
 
+        logger.info("worker_openai_started", extra={"job_id": str(job_id), "candidate_id": str(candidate_id)})
         ai_service = get_ai_service()
         try:
             ai_result = ai_service.generate_feedback(matching_result)
@@ -274,6 +289,7 @@ def process_analysis_job(self, message: dict):
         matching_result["recommendations"] = ai_result.get("recommendations", {})
         matching_result["alternative_roles"] = ai_result.get("alternative_roles", [])
 
+        logger.info("worker_save_database_started", extra={"job_id": str(job_id), "candidate_id": str(candidate_id)})
         result = upsert_result(
             db,
             job=job,
@@ -301,16 +317,21 @@ def process_analysis_job(self, message: dict):
 
         # IntegrityError và các lỗi tạm thời (DB/kết nối/timeout) nên được retry;
         # lỗi dữ liệu (parse, file rỗng, định dạng không hỗ trợ) thì fail luôn.
+        retry_count = int(message.get("_internal_retry_count", 0))
         retryable = isinstance(exc, IntegrityError) or is_transient_error(exc)
-        retries_left = self.request.retries < self.max_retries
+        retries_left = retry_count < MAX_INTERNAL_RETRIES
 
         if retryable and retries_left:
             _reset_for_retry(db, job_id, candidate_id, exc)
             logger.warning(
                 "Transient error, retrying job=%s candidate=%s attempt=%s: %s",
-                job_id, candidate_id, self.request.retries + 1, exc,
+                job_id, candidate_id, retry_count + 1, exc,
             )
-            raise self.retry(exc=exc)
+            time.sleep(DEFAULT_RETRY_DELAY_SECONDS)
+            retry_message = dict(message)
+            retry_message["_internal_retry_count"] = retry_count + 1
+            process_analysis_job(retry_message)
+            return
 
         # Lỗi dữ liệu hoặc đã hết lượt retry -> đánh dấu thất bại.
         job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
