@@ -13,8 +13,10 @@ frontend/dist/
 frontend/tsconfig.tsbuildinfo
 *.tsbuildinfo
 
-uploads/*
-!uploads/.gitkeep
+# Keep the upload directory in Git, but never commit user-uploaded files.
+/uploads/**
+!/uploads/
+!/uploads/.gitkeep
 storage/
 tmp/
 
