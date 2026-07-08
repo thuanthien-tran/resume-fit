@@ -17,7 +17,7 @@ frontend/tsconfig.tsbuildinfo
 /uploads/**
 !/uploads/
 !/uploads/.gitkeep
-storage/
+/storage/
 tmp/
 
 postgres_data/
