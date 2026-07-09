@@ -37,10 +37,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=409, detail="Email đã tồn tại")
 
+    full_name = payload.full_name.strip() if payload.full_name else None
+
     user = User(
         email=email,
         password_hash=hash_password(payload.password),
-        full_name=payload.full_name,
+        full_name=full_name or None,
         role="user",
         status="active",
     )

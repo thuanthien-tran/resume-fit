@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ResultReport from './components/ResultReport';
 import FilePreview from './components/FilePreview';
 import JobList from './components/JobList';
@@ -10,6 +10,7 @@ const API_BASE = '/api';
 type WizardStep = 1 | 2 | 3;
 type AppView = 'workspace' | 'jobs' | 'cvs' | 'jds' | 'ranking';
 type NavIconName = 'briefcase' | 'users' | 'clipboard' | 'resume' | 'fileText';
+type AuthMode = 'login' | 'register';
 
 const wizardSteps: { step: WizardStep; label: string; hint: string }[] = [
   { step: 1, label: 'Tạo công việc', hint: 'Đặt tên vị trí cần tuyển' },
@@ -145,8 +146,11 @@ function friendlyConfidence(value?: string | null) {
 }
 
 function App() {
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('nd3t@gmail.com');
   const [password, setPassword] = useState('20222026');
+  const [fullName, setFullName] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [refreshToken, setRefreshToken] = useState('');
   const [jobTitle, setJobTitle] = useState('');
@@ -266,9 +270,12 @@ function App() {
   async function handleJson(res: Response) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      // detail có thể là chuỗi hoặc object {message, reasons,...} (ví dụ 422 sai loại tệp).
+      // detail có thể là chuỗi, object {message, reasons,...} hoặc mảng lỗi validation của FastAPI.
       const d = data.detail;
-      const msg = typeof d === 'string' ? d : d?.message || 'Request failed';
+      const validationMsg = Array.isArray(d)
+        ? d.map((item) => item?.msg).filter(Boolean).join('; ')
+        : '';
+      const msg = typeof d === 'string' ? d : d?.message || validationMsg || 'Request failed';
       const err = new Error(msg) as Error & { detail?: any };
       if (d && typeof d === 'object') err.detail = d;
       throw err;
@@ -303,16 +310,47 @@ function App() {
     return 'danger';
   }
 
+  function validateAuthFields(mode: AuthMode) {
+    if (!email.trim()) return 'Hãy nhập email.';
+    if (!password) return 'Hãy nhập mật khẩu.';
+    if (mode === 'register') {
+      if (password.length < 8) return 'Mật khẩu cần có ít nhất 8 ký tự.';
+      if (password !== confirmPassword) return 'Mật khẩu xác nhận chưa khớp.';
+    }
+    return '';
+  }
+
+  async function performLogin(successMessage = 'Đăng nhập thành công') {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim(), password }),
+    });
+    const data = await handleJson(res);
+    setAccessToken(data.access_token);
+    setRefreshToken(data.refresh_token || '');
+    showSuccessMessage(successMessage);
+  }
+
   async function register() {
+    const validationError = validateAuthFields('register');
+    if (validationError) {
+      setMessage(validationError);
+      return;
+    }
+
     setLoadingKey('register', true);
     try {
-      const res = await fetch(`${API_BASE}/auth/register`, {
+      await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, full_name: 'NĐ-3T' }),
-      });
-      const data = await handleJson(res);
-      setMessage(`Đăng ký thành công: ${data.email}`);
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+          full_name: fullName.trim() || null,
+        }),
+      }).then(handleJson);
+      await performLogin('Đăng ký thành công. Bạn đã được đăng nhập.');
     } catch (err: any) {
       setMessage(err.message);
     } finally {
@@ -321,22 +359,26 @@ function App() {
   }
 
   async function login() {
+    const validationError = validateAuthFields('login');
+    if (validationError) {
+      setMessage(validationError);
+      return;
+    }
+
     setLoadingKey('login', true);
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await handleJson(res);
-      setAccessToken(data.access_token);
-      setRefreshToken(data.refresh_token || '');
-      showSuccessMessage('Đăng nhập thành công');
+      await performLogin();
     } catch (err: any) {
       setMessage(err.message);
     } finally {
       setLoadingKey('login', false);
     }
+  }
+
+  function switchAuthMode(mode: AuthMode) {
+    setAuthMode(mode);
+    setMessage('');
+    setConfirmPassword('');
   }
 
   async function createJob() {
@@ -714,17 +756,80 @@ function App() {
           </section>
 
           <section className="auth-panel login-only-panel">
-            <p className="eyebrow">Đăng nhập hệ thống</p>
-            <h2>Chào mừng trở lại</h2>
-            <p className="panel-muted">Đăng nhập để tiếp tục đánh giá CV và JD trên Resume Fit.</p>
-            <label>Email</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" />
-            <label>Mật khẩu</label>
-            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Mật khẩu" />
-            <div className="auth-actions login-only-actions">
-              <button className="primary" onClick={login} disabled={loading.login}>{loading.login ? 'Đang đăng nhập...' : 'Đăng nhập'}</button>
+            <div className="auth-mode-switch" role="tablist" aria-label="Chọn đăng nhập hoặc đăng ký">
+              <button
+                type="button"
+                className={authMode === 'login' ? 'active' : ''}
+                onClick={() => switchAuthMode('login')}
+                aria-selected={authMode === 'login'}
+              >
+                Đăng nhập
+              </button>
+              <button
+                type="button"
+                className={authMode === 'register' ? 'active' : ''}
+                onClick={() => switchAuthMode('register')}
+                aria-selected={authMode === 'register'}
+              >
+                Đăng ký
+              </button>
             </div>
-            {message && <div className="inline-message">{message}</div>}
+
+            <p className="eyebrow">{authMode === 'login' ? 'Đăng nhập hệ thống' : 'Tạo tài khoản mới'}</p>
+            <h2>{authMode === 'login' ? 'Chào mừng trở lại' : 'Bắt đầu với Resume Fit'}</h2>
+            <p className="panel-muted">
+              {authMode === 'login'
+                ? 'Đăng nhập để tiếp tục đánh giá CV và JD trên Resume Fit.'
+                : 'Đăng ký tài khoản để lưu CV, JD và quản lý các lần phân tích của riêng bạn.'}
+            </p>
+
+            {authMode === 'register' && (
+              <>
+                <label>Họ tên</label>
+                <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Họ tên của bạn" autoComplete="name" />
+              </>
+            )}
+            <label>Email</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" autoComplete="email" />
+            <label>Mật khẩu</label>
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              placeholder="Mật khẩu"
+              autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+            />
+            {authMode === 'register' && (
+              <>
+                <label>Xác nhận mật khẩu</label>
+                <input
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  type="password"
+                  placeholder="Nhập lại mật khẩu"
+                  autoComplete="new-password"
+                />
+                <p className="auth-hint">Mật khẩu tối thiểu 8 ký tự.</p>
+              </>
+            )}
+            <div className="auth-actions login-only-actions">
+              {authMode === 'login' ? (
+                <button className="primary" onClick={login} disabled={loading.login}>
+                  {loading.login ? 'Đang đăng nhập...' : 'Đăng nhập'}
+                </button>
+              ) : (
+                <button className="primary" onClick={register} disabled={loading.register}>
+                  {loading.register ? 'Đang tạo tài khoản...' : 'Đăng ký'}
+                </button>
+              )}
+            </div>
+            <p className="auth-switch-note">
+              {authMode === 'login' ? 'Chưa có tài khoản?' : 'Đã có tài khoản?'}{' '}
+              <button type="button" onClick={() => switchAuthMode(authMode === 'login' ? 'register' : 'login')}>
+                {authMode === 'login' ? 'Đăng ký ngay' : 'Đăng nhập'}
+              </button>
+            </p>
+            {message && <div className={`inline-message ${messageTone === 'success' ? 'success' : ''}`}>{message}</div>}
           </section>
         </div>
       </div>
