@@ -6,6 +6,9 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError, EndpointConnectionError
 
 from app.core.config import settings
+from app.database.session import SessionLocal
+from app.models.analysis_job import AnalysisJob
+from app.models.candidate import Candidate
 from worker.tasks import process_analysis_job
 
 logger = logging.getLogger(__name__)
@@ -78,13 +81,63 @@ def poll_sqs_once(client) -> int:
     return processed
 
 
+def poll_local_db_once() -> int:
+    """Process queued candidates directly from Postgres for local/dev mode.
+
+    Production uses SQS. In local setups SQS_QUEUE_URL is often empty, so the API
+    marks candidates as queued in the database and this worker picks them up.
+    """
+    db = SessionLocal()
+    try:
+        candidate = (
+            db.query(Candidate)
+            .join(AnalysisJob, Candidate.job_id == AnalysisJob.id)
+            .filter(Candidate.status == "queued")
+            .filter(AnalysisJob.status.in_(["queued", "processing"]))
+            .order_by(Candidate.queued_at.asc().nullslast(), Candidate.created_at.asc())
+            .first()
+        )
+        if not candidate:
+            return 0
+        job = db.query(AnalysisJob).filter(AnalysisJob.id == candidate.job_id).first()
+        if not job or not job.jd_file_id or not candidate.cv_file_id:
+            return 0
+        payload = {
+            "job_id": str(job.id),
+            "candidate_id": str(candidate.id),
+            "cv_file_id": str(candidate.cv_file_id),
+            "jd_file_id": str(job.jd_file_id),
+        }
+    finally:
+        db.close()
+
+    logger.info(
+        "local_db_message_processing",
+        extra={"job_id": payload["job_id"], "candidate_id": payload["candidate_id"]},
+    )
+    process_analysis_job(payload)
+    return 1
+
+
+def poll_local_db_forever() -> None:
+    logger.info("local_db_worker_started", extra={"reason": "SQS_QUEUE_URL is empty"})
+    while True:
+        try:
+            processed = poll_local_db_once()
+            if not processed:
+                time.sleep(2)
+        except Exception:
+            logger.exception("local_db_message_failed")
+            time.sleep(2)
+
 def create_sqs_client():
     return boto3.client("sqs", region_name=settings.aws_region)
 
 
 def poll_sqs_forever() -> None:
     if not settings.sqs_queue_url:
-        raise RuntimeError("SQS_QUEUE_URL is required for the SQS worker.")
+        poll_local_db_forever()
+        return
 
     client = create_sqs_client()
     logger.info(

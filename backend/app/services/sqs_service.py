@@ -40,7 +40,15 @@ class SQSService:
 
     def _send_with_retries(self, message: dict) -> None:
         if not self.queue_url:
-            raise RuntimeError("SQS_QUEUE_URL is required to enqueue analysis jobs.")
+            logger.info(
+                "local_db_queue_message_registered",
+                extra={
+                    "job_id": message.get("job_id"),
+                    "candidate_id": message.get("candidate_id"),
+                    "reason": "SQS_QUEUE_URL is empty; worker polls queued candidates from DB",
+                },
+            )
+            return
         if self.client is None:
             self.client = boto3.client("sqs", region_name=settings.aws_region)
         body = json.dumps(message, separators=(",", ":"), ensure_ascii=False)
