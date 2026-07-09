@@ -4,5 +4,4 @@ dist
 .vite-temp
 *.tsbuildinfo
 npm-debug.log*
-Dockerfile
 README.md
