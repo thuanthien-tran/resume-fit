@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 
 
 SKILL_SYNONYMS = {
@@ -365,6 +366,15 @@ def detect_role_level(text: str, years: int | None = None) -> str:
             return "manager"
         if years >= 5 and has_leadership:
             return "senior"
+        # Explicit years are a strong seniority signal even when the CV/JD omits
+        # words like junior/senior/lead. This reduces false "unknown" role matches.
+        if years < 1:
+            return "intern"
+        if years <= 2:
+            return "junior"
+        if years <= 5:
+            return "mid"
+        return "senior"
     if has_management:
         return "manager"
     if has_leadership:
@@ -565,8 +575,18 @@ def extract_years_experience(text: str) -> int | None:
             return int(match.group(1))
 
     # Phương án cuối: khoảng năm "2019 - 2024" -> lấy khoảng dài nhất (<= 40 năm).
-    ranges = re.findall(r"\b(19\d{2}|20\d{2})\s*[-–—]\s*(19\d{2}|20\d{2})\b", text_lower)
-    spans = [int(b) - int(a) for a, b in ranges if 0 <= int(b) - int(a) <= 40]
+    # Also supports open-ended ranges like "2021 - present/current/now".
+    current_year = datetime.utcnow().year
+    ranges = re.findall(
+        r"\b(19\d{2}|20\d{2})\s*[-–—]\s*(19\d{2}|20\d{2}|present|current|now|nay|hiện\s+tại)\b",
+        text_lower,
+    )
+    spans = []
+    for start, end in ranges:
+        end_year = current_year if not end[:4].isdigit() else int(end[:4])
+        span = end_year - int(start)
+        if 0 <= span <= 40:
+            spans.append(span)
     if spans:
         return max(spans)
     return None

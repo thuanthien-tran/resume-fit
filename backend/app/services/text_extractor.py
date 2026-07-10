@@ -7,6 +7,8 @@ from PIL import Image
 from pptx import Presentation
 from pypdf import PdfReader
 
+from app.utils.sanitize import sanitize_text
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -151,19 +153,24 @@ def extract_text_from_image(content: bytes) -> str:
 def extract_text(content: bytes, path: str) -> str:
     ext = Path(path).suffix.lower()
     if ext == ".pdf":
-        return extract_text_from_pdf(content)
-    if ext == ".docx":
-        return extract_text_from_docx(content)
-    if ext == ".pptx":
-        return extract_text_from_pptx(content)
-    if ext in (".txt", ".rtf"):
-        return extract_text_from_txt(content)
-    if ext == ".doc":
+        text = extract_text_from_pdf(content)
+    elif ext == ".docx":
+        text = extract_text_from_docx(content)
+    elif ext == ".pptx":
+        text = extract_text_from_pptx(content)
+    elif ext in (".txt", ".rtf"):
+        text = extract_text_from_txt(content)
+    elif ext == ".doc":
         # File .doc (Word 97-2003) là định dạng binary, không decode được như text.
         raise ValueError(
             "Định dạng .doc (Word cũ) chưa được hỗ trợ. "
             "Vui lòng lưu lại thành .docx hoặc .pdf rồi tải lên."
         )
-    if ext in (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"):
-        return extract_text_from_image(content)
-    raise ValueError(f"Unsupported file type: {ext}")
+    elif ext in (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"):
+        text = extract_text_from_image(content)
+    else:
+        raise ValueError(f"Unsupported file type: {ext}")
+
+    # Last-mile cleanup: extracted PDFs/DOCX files may contain embedded NUL/control
+    # chars that break PostgreSQL JSONB/TEXT inserts (e.g. "\\u0000 cannot be converted to text").
+    return sanitize_text(text).strip()

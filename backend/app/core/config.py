@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     app_name: str = "AI Resume Platform"
     api_prefix: str = "/api"
+    cors_origins: str = ""  # comma-separated; required for production if frontend is on another domain
 
     database_url: str
 

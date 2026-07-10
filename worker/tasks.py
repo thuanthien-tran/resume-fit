@@ -18,6 +18,7 @@ from app.models.uploaded_file import UploadedFile
 from app.services.job_event_service import create_job_event
 from app.services.text_extractor import extract_text
 from app.storage.factory import get_storage_service
+from app.utils.sanitize import sanitize_for_jsonb, sanitize_text
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,9 @@ def upsert_result(db, *, job, candidate, matching_result, ai_result, ai_provider
 
     result.job_id = job.id
     result.candidate_id = candidate.id if candidate else None
+    matching_result = sanitize_for_jsonb(matching_result)
+    ai_result = sanitize_for_jsonb(ai_result)
+
     result.matching_score = matching_result["matching_score"]
     result.skill_score = matching_result["skill_score"]
     result.experience_score = matching_result["experience_score"]
@@ -136,7 +140,7 @@ def upsert_result(db, *, job, candidate, matching_result, ai_result, ai_provider
     result.matched_skills = matching_result["matched_skills"]
     result.missing_skills = matching_result["missing_skills"]
     result.extra_skills = matching_result["extra_skills"]
-    result.summary = ai_result.get("summary")
+    result.summary = sanitize_text(ai_result.get("summary") or "") or None
     result.strengths = ai_result.get("strengths", [])
     result.weaknesses = ai_result.get("weaknesses", [])
     result.improvement_suggestions = ai_result.get("improvement_suggestions", [])
@@ -239,8 +243,8 @@ def process_analysis_job(message: dict):
         jd_content = storage_service.read(jd_file.storage_path)
 
         logger.info("worker_extract_text_started", extra={"job_id": str(job_id), "candidate_id": str(candidate_id)})
-        cv_text = extract_text(cv_content, cv_file.storage_path)
-        jd_text = extract_text(jd_content, jd_file.storage_path)
+        cv_text = sanitize_text(extract_text(cv_content, cv_file.storage_path))
+        jd_text = sanitize_text(extract_text(jd_content, jd_file.storage_path))
         if not cv_text.strip() or not jd_text.strip():
             raise ValueError("Could not extract text from CV or JD")
 
@@ -249,16 +253,20 @@ def process_analysis_job(message: dict):
         # được văn bản ở bước này. Chỉ chặn khi phát hiện CHẮC CHẮN loại ngược lại.
         cv_check = validate_expected_type(cv_text, "cv")
         jd_check = validate_expected_type(jd_text, "jd")
-        if cv_check["validation_status"] == "mismatch" or jd_check["validation_status"] == "mismatch":
+        if cv_check["validation_status"] != "valid" or jd_check["validation_status"] != "valid":
             problems = []
             if cv_check["validation_status"] == "mismatch":
                 problems.append("tệp CV có vẻ là JD")
+            elif cv_check["validation_status"] == "unknown":
+                problems.append("tệp CV chưa đủ dấu hiệu là CV")
             if jd_check["validation_status"] == "mismatch":
                 problems.append("tệp JD có vẻ là CV")
+            elif jd_check["validation_status"] == "unknown":
+                problems.append("tệp JD chưa đủ dấu hiệu là JD")
             raise ValueError(
-                "Không thể phân tích vì loại tài liệu không đúng: "
+                "Không thể phân tích vì loại tài liệu không đúng hoặc không đủ tin cậy: "
                 + "; ".join(problems)
-                + ". Vui lòng kiểm tra lại CV và JD đã tải đúng ô chưa."
+                + ". Vui lòng tải đúng CV vào ô CV và đúng JD vào ô JD."
             )
 
         logger.info("worker_matching_started", extra={"job_id": str(job_id), "candidate_id": str(candidate_id)})

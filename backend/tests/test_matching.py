@@ -159,3 +159,28 @@ def test_role_level_inferred_from_context_in_matching():
     result = calculate_matching(cv, jd)
     assert result["cv_role_level"] == "manager"
     assert result["role_compatibility"] >= 70
+
+
+def test_sanitize_removes_nul_from_nested_jsonb_payload():
+    from app.utils.sanitize import sanitize_for_jsonb, sanitize_text
+
+    assert sanitize_text("Human Bot Tra\x00inee") == "Human Bot Trainee"
+    payload = {"extracted_text": {"cv": "Developer\nHuman Bot Tra\x00inee"}, "items": ["a\x00b"]}
+    cleaned = sanitize_for_jsonb(payload)
+    assert "\x00" not in cleaned["extracted_text"]["cv"]
+    assert cleaned["items"] == ["ab"]
+
+
+def test_role_level_inferred_from_years_without_title():
+    from app.matching.engine import detect_role_level
+
+    assert detect_role_level("Built backend APIs. 1 year experience", 1) == "junior"
+    assert detect_role_level("Built backend APIs. 4 years experience", 4) == "mid"
+    assert detect_role_level("Built backend APIs. 6 years experience", 6) == "senior"
+
+
+def test_experience_parser_present_range():
+    from datetime import datetime
+    from app.matching.engine import extract_years_experience as y
+
+    assert y("Backend Developer 2021 - present") == datetime.utcnow().year - 2021

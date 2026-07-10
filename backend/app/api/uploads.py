@@ -58,26 +58,60 @@ def assert_document_type(content: bytes, filename: str, expected_type: str) -> N
     """
     try:
         text = extract_text(content, filename)
-    except Exception:
-        # Không đọc được văn bản ở bước upload -> không chặn; worker sẽ kiểm lại.
-        return
+    except Exception as exc:
+        expected_label = "CV" if expected_type == "cv" else "JD"
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "DOCUMENT_TEXT_EXTRACTION_FAILED",
+                "message": (
+                    f"Không đọc được nội dung văn bản từ tệp \"{filename}\" để xác nhận là {expected_label}. "
+                    "Vui lòng dùng PDF/DOCX/TXT có lớp text rõ ràng, không phải tệp scan/hỏng."
+                ),
+                "expected_type": expected_type,
+                "detected_type": "unknown",
+                "reason": exc.__class__.__name__,
+            },
+        ) from exc
     if not text or not text.strip():
-        return
+        expected_label = "CV" if expected_type == "cv" else "JD"
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "DOCUMENT_TEXT_EMPTY",
+                "message": f"Tệp \"{filename}\" không có nội dung văn bản để xác nhận là {expected_label}.",
+                "expected_type": expected_type,
+                "detected_type": "unknown",
+            },
+        )
 
     result = validate_expected_type(text, expected_type)
-    if result["validation_status"] != "mismatch":
+    if result["validation_status"] == "valid":
         return
 
     expected_label = "CV" if expected_type == "cv" else "JD"
-    detected_label = "CV" if result["detected_type"] == "cv" else "JD"
+    if result["validation_status"] == "mismatch":
+        detected_label = "CV" if result["detected_type"] == "cv" else "JD"
+        code = "DOCUMENT_TYPE_MISMATCH"
+        message = f"Tệp \"{filename}\" có vẻ là {detected_label}, không phải {expected_label}."
+    else:
+        code = "DOCUMENT_TYPE_UNKNOWN"
+        message = (
+            f"Tệp \"{filename}\" chưa đủ dấu hiệu để xác nhận là {expected_label}. "
+            "Vui lòng tải đúng tài liệu CV/JD thay vì báo cáo, hợp đồng, hóa đơn, slide hoặc nội dung pha trộn."
+        )
+
     raise HTTPException(
         status_code=422,
         detail={
-            "code": "DOCUMENT_TYPE_MISMATCH",
-            "message": f"Tệp \"{filename}\" có vẻ là {detected_label}, không phải {expected_label}.",
+            "code": code,
+            "message": message,
             "expected_type": expected_type,
             "detected_type": result["detected_type"],
             "confidence": result["confidence"],
+            "cv_score": result.get("cv_score"),
+            "jd_score": result.get("jd_score"),
+            "other_score": result.get("other_score"),
             "reasons": result["reasons"],
         },
     )
@@ -372,6 +406,17 @@ async def local_put(token: str, request: Request):
     return {"storage_path": storage_path, "file_size": len(content)}
 
 
+
+@router.get("/local-get")
+def local_get(token: str):
+    """Endpoint mô phỏng S3 GET ở môi trường local, dùng token có hạn."""
+    storage_path = _decode_presign_token(token, "get")
+    try:
+        content = storage_service.read(storage_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Không đọc được nội dung tệp")
+    return Response(content=content, media_type="application/octet-stream")
+
 @router.post("/complete", response_model=UploadResponse, status_code=201)
 def complete_upload(
     payload: CompleteUploadRequest,
@@ -388,6 +433,10 @@ def complete_upload(
     assert_owner_or_admin(job.user_id, current_user)
     if job.status not in ("uploaded", "failed", "cancelled"):
         raise HTTPException(status_code=409, detail="Không thể tải tệp lên với trạng thái công việc hiện tại")
+
+    expected_storage_path = build_storage_path(current_user.id, job.id, payload.file_type, payload.original_filename)
+    if payload.storage_path != expected_storage_path:
+        raise HTTPException(status_code=403, detail="storage_path không khớp với người dùng/công việc/tệp đã được cấp quyền upload")
 
     if not storage_service.exists(payload.storage_path):
         raise HTTPException(status_code=400, detail="Chưa tìm thấy tệp trên storage")

@@ -153,3 +153,74 @@ def test_strip_accents_helper():
     from app.services.document_classifier import strip_accents
     assert strip_accents("Kinh nghiệm") == "kinh nghiem"
     assert strip_accents("Đại học") == "dai hoc"
+
+
+def test_random_business_report_is_unknown_for_both_slots():
+    text = """
+    Quarterly Business Report Q2
+    Market analysis, revenue trend, action items and financial statement.
+    This proposal summarizes risks, timeline, budget and stakeholder updates.
+    """
+    assert validate_expected_type(text, "cv")["validation_status"] == "unknown"
+    assert validate_expected_type(text, "jd")["validation_status"] == "unknown"
+
+
+def test_invoice_or_contract_not_accepted_as_cv_or_jd():
+    invoice = """
+    Invoice INV-2026-001. Tax code 0312345678. Amount due 12,000,000 VND.
+    Purchase order, receipt, payment terms and bank account information.
+    """
+    assert detect_document_type(invoice)["detected_type"] == "unknown"
+    assert validate_expected_type(invoice, "cv")["validation_status"] == "unknown"
+    assert validate_expected_type(invoice, "jd")["validation_status"] == "unknown"
+
+
+def test_multiple_cvs_in_jd_slot_is_blocked_as_cv():
+    multi_cv = CV_SAMPLE + "\n--- NEXT CV ---\n" + CV_NO_DIACRITIC.replace("Nguyen Van A", "Tran Van B")
+    result = validate_expected_type(multi_cv, "jd")
+    assert result["validation_status"] == "mismatch"
+    assert result["detected_type"] == "cv"
+
+
+def test_multiple_jds_in_cv_slot_is_blocked_as_jd():
+    multi_jd = JD_SAMPLE + "\n--- NEXT JD ---\n" + JD_NO_DIACRITIC
+    result = validate_expected_type(multi_jd, "cv")
+    assert result["validation_status"] == "mismatch"
+    assert result["detected_type"] == "jd"
+
+
+def test_generic_skill_list_not_enough_to_be_cv_or_jd():
+    text = "Python, FastAPI, Docker, PostgreSQL, AWS, teamwork, communication."
+    assert validate_expected_type(text, "cv")["validation_status"] == "unknown"
+    assert validate_expected_type(text, "jd")["validation_status"] == "unknown"
+
+
+def test_letter_spaced_pdf_cv_is_accepted_as_cv():
+    """PDF CV templates can extract as one character per token; still accept as CV."""
+    letter_spaced_cv = """
+    N g u y ễ n  H o à n g  H ữ u  T u ấ n
+    n g u y e n h o a n g h u u t u a n 7 @ g m a i l . c o m
+    0 9 7 1 2 0 0 2 4 4
+    C O N T A C T
+    C H Ứ N G  C H Ỉ
+    M Ụ C  T I Ê U  N G H Ề  N G H I Ệ P
+    D Ự  Á N  C Á  N H Â N
+    V a i  t r ò :  N e t w o r k  E n g i n e e r
+    P R O F I L E
+    S i n h  v i ê n  n ă m  4  -  Đ ạ i  h ọ c  C ô n g  n g h ệ
+    T H Ự C  T Ậ P  S I N H  I T
+    N e t w o r k  S e r v i c e s
+    N e t w o r k  S e c u r i t y
+    L à  s i n h  v i ê n  c h u y ê n  n g à n h  M ạ n g  m á y  t í n h ,
+    t ô i  m o n g  m u ố n  b ắ t  đ ầ u  v ớ i  v ị  t r í  F r e s h e r / N O C  I n t e r n .
+    """
+    result = validate_expected_type(letter_spaced_cv, "cv")
+    assert result["validation_status"] == "valid"
+    assert result["detected_type"] == "cv"
+
+
+def test_letter_spaced_cv_is_not_misclassified_as_jd():
+    letter_spaced_cv = "M Ụ C  T I Ê U  N G H Ề  N G H I Ệ P\nD Ự  Á N  C Á  N H Â N\nP R O F I L E\nC H Ứ N G  C H Ỉ\n0 9 7 1 2 0 0 2 4 4"
+    result = validate_expected_type(letter_spaced_cv, "jd")
+    assert result["validation_status"] == "mismatch"
+    assert result["detected_type"] == "cv"

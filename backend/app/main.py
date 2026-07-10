@@ -4,16 +4,26 @@ from fastapi.responses import JSONResponse
 
 from app.api import admin, auth, health, jobs, uploads
 from app.api.dependencies import get_current_user
+from app.core.config import settings
 from app.core.logging import setup_logging
 
 setup_logging()
 
 app = FastAPI(title="AI Resume Matching Platform", version="0.1.0")
 
+def _cors_origins() -> list[str]:
+    configured = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+    if configured:
+        return configured
+    if settings.app_env.lower() in {"local", "dev", "development"}:
+        return ["*"]
+    return []
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

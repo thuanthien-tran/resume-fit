@@ -5,7 +5,7 @@ import JobList from './components/JobList';
 import DocumentList from './components/DocumentList';
 import RankingBoard from './components/RankingBoard';
 
-const API_BASE = '/api';
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 type WizardStep = 1 | 2 | 3;
 type AppView = 'workspace' | 'jobs' | 'cvs' | 'jds' | 'ranking';
@@ -147,8 +147,8 @@ function friendlyConfidence(value?: string | null) {
 
 function App() {
   const [authMode, setAuthMode] = useState<AuthMode>('login');
-  const [email, setEmail] = useState('nd3t@gmail.com');
-  const [password, setPassword] = useState('20222026');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [accessToken, setAccessToken] = useState('');
@@ -1235,7 +1235,7 @@ function App() {
                   <p>Refresh Token: <code>{refreshToken ? 'OK' : 'Không có'}</code></p>
                   <p>Mã công việc: <code>{jobId || 'Không có'}</code></p>
                   <p>Trạng thái: <code>{jobStatus || 'Không có'}</code></p>
-                  <pre>{JSON.stringify({ ranking, result }, null, 2)}</pre>
+                  <pre>{JSON.stringify({ rankingCount: ranking.length, selectedCandidateId, hasResult: Boolean(result), compatibility: result?.compatibility, metadata: result?.metadata }, null, 2)}</pre>
                 </div>
               )}
             </section>
